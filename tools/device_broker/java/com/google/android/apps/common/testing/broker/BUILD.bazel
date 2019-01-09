@@ -3,6 +3,8 @@
 # Description:
 #   An interface for tests to access physical or virtual devices.
 
+load("@rules_maven//:defs.bzl", "artifact")
+
 licenses(["notice"])  # Apache 2.0
 
 exports_files(["dexdump_annotations"])
@@ -106,11 +108,13 @@ java_library(
         ":anno",
         ":environment",
         ":struct",
+        "@guice//jar",
         "//tools/device_broker/java/com/google/android/apps/common/testing/broker/shell",
         "//tools/device_broker/java/com/google/android/apps/common/testing/suite/dex",
         "//tools/device_broker/proto:test_info_pb_java_proto",
         "@guava//jar",
         "@jsr330",
+        artifact("com.linkedin.dextestparser:parser:2.0.1"),
     ],
 )
 

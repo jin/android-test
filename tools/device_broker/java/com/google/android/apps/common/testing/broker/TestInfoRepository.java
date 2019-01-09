@@ -27,6 +27,8 @@ import com.google.android.apps.common.testing.broker.DeviceBrokerAnnotations.Sys
 import com.google.android.apps.common.testing.broker.shell.Command;
 import com.google.android.apps.common.testing.broker.shell.CommandException;
 import com.google.android.apps.common.testing.broker.shell.CommandResult;
+import com.google.android.apps.common.testing.proto.TestInfo.AnnotationPb;
+import com.google.android.apps.common.testing.proto.TestInfo.InfoPb;
 import com.google.android.apps.common.testing.proto.TestInfo.TestSuitePb;
 import com.google.android.apps.common.testing.suite.dex.DumpUtils;
 import com.google.common.annotations.VisibleForTesting;
@@ -38,6 +40,12 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.inject.internal.Annotations;
+import com.google.protobuf.TextFormat;
+import com.linkedin.dex.parser.AnnotationUtilsKt;
+import com.linkedin.dex.parser.DexParser;
+import com.linkedin.dex.parser.TestAnnotation;
+import com.linkedin.dex.parser.TestMethod;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -48,6 +56,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +116,8 @@ public class TestInfoRepository {
       String testApkPath = getApkPathForPackage(instrumentation.getAndroidPackage());
       apksToScan.add(testApkPath);
     }
+
+
     for (String testPackage : additionalTestPackages) {
       if (!ignoreTestPackages.contains(testPackage)) {
         String apkPath = getApkPathForPackage(testPackage);
@@ -113,22 +125,72 @@ public class TestInfoRepository {
       }
     }
 
-    List<InputStream> dexDumpFiles = Lists.newArrayList();
-    // The test apk may have multiple dex files, so give it the same multi-dex treatment as the
-    // target app.
+    logger.info("-----------------");
+
+    List<InfoPb> infoPbs = new ArrayList<>();
     for (String apkPath : apksToScan) {
-      dexDumpFiles.addAll(getDexDumpFilesFromApk(apkPath));
+      List<TestMethod> testMethods = DexParser.findTestMethods(apkPath);
+
+      for (TestMethod testMethod : testMethods) {
+        InfoPb.Builder info = InfoPb.newBuilder();
+
+        // burrows.apps.example.template.instrumentation.MainActivityTest#shouldDisplayMainScreenWithCorrectTitle
+        String testMethodName = testMethod.getTestName();
+        List<String> parts = Arrays.asList(testMethodName.split("#"));
+        assert parts.size() == 2;
+
+        info.setTestMethod(parts.get(1));
+
+        String FullyQualifiedClassName = parts.get(0);
+        info.setTestClass(FullyQualifiedClassName.substring(FullyQualifiedClassName.lastIndexOf('.') + 1));
+        info.setTestPackage(FullyQualifiedClassName.substring(0, FullyQualifiedClassName.lastIndexOf('.')));
+
+        for (TestAnnotation testAnnotation : testMethod.getAnnotations()) {
+          AnnotationPb.Builder annotationPb = AnnotationPb.newBuilder();
+          String className = testAnnotation.getName();
+          annotationPb.setClassName(className);
+
+          if (className.contains("RunWith")) {
+            info.addClassAnnotation(annotationPb.build());
+          } else {
+            info.addMethodAnnotation(annotationPb.build());
+          }
+
+          logger.info(testAnnotation.toString());
+          logger.info(testAnnotation.getValues().toString());
+        }
+
+        info.setIsUiTest(false);
+        infoPbs.add(info.build());
+      }
     }
 
-    Pair<TestSuitePb, ImmutableSet<String>> dexDump =
-        DumpUtils.parseDexDump(dexDumpFiles.toArray(new InputStream[0]));
-    targetToClasses.put(instrumentation.getTargetPackage(), dexDump.getSecond());
-    TestSuitePb result = dexDump.getFirst();
-    logger.info(
-        String.format(
-            "Found %d test(s). Scanned %d dex file(s) in %d APK(s)",
-            result.getInfoCount(), dexDumpFiles.size(), apksToScan.size()));
-    return result;
+    for (InfoPb infoPb : infoPbs) {
+      logger.info(TextFormat.printToString(infoPb));
+    }
+
+    TestSuitePb.Builder testSuitePb = TestSuitePb.newBuilder();
+    testSuitePb.addAllInfo(infoPbs);
+
+    logger.info("-----------------");
+
+    // List<InputStream> dexDumpFiles = Lists.newArrayList();
+    // The test apk may have multiple dex files, so give it the same multi-dex treatment as the
+    // target app.
+    // for (String apkPath : apksToScan) {
+    //   dexDumpFiles.addAll(getDexDumpFilesFromApk(apkPath));
+    // }
+
+    // Pair<TestSuitePb, ImmutableSet<String>> dexDump =
+    //     DumpUtils.parseDexDump(dexDumpFiles.toArray(new InputStream[0]));
+    // targetToClasses.put(instrumentation.getTargetPackage(), dexDump.getSecond());
+    // TestSuitePb result = dexDump.getFirst();
+    // logger.info(
+    //     String.format(
+    //         "Found %d test(s). Scanned %d dex file(s) in %d APK(s)",
+    //         result.getInfoCount(), dexDumpFiles.size(), apksToScan.size()));
+    // logger.info(dexDump.getFirst().getInfo(0).toString());
+    return testSuitePb.build();
   }
 
   public TestSuitePb listTestsInFiles(Instrumentation instrumentation, List<File> dexFiles) {
@@ -141,7 +203,6 @@ public class TestInfoRepository {
       Pair<TestSuitePb, ImmutableSet<String>> dexDump =
           DumpUtils.parseDexDump(dexDumpFiles.toArray(new InputStream[dexDumpFiles.size()]));
       targetToClasses.put(instrumentation.getTargetPackage(), dexDump.getSecond());
-
       return dexDump.getFirst();
     } catch (IOException e) {
       throw new RuntimeException(e);

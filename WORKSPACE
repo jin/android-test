@@ -30,10 +30,12 @@ maven_install(
         "androidx.viewpager:viewpager:" + ANDROIDX_VERSION,
         "androidx.drawerlayout:drawerlayout:" + ANDROIDX_VERSION,
         "androidx.cursoradapter:cursoradapter:" + ANDROIDX_VERSION,
+        "com.linkedin.dextestparser:parser:2.0.1",
     ],
     repositories = [
         "https://bintray.com/bintray/jcenter",
         "https://maven.google.com",
+        "https://dl.bintray.com/linkedin/maven",
     ],
 )
 
